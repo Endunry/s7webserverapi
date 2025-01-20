@@ -1,0 +1,42 @@
+{
+  "name": "s7webserverapi",
+  "version": "1.0.0",
+  "description": "Unofficial Simatic-S7-Webserver JSON-RPC-API Client for S7-1200/1500 PLCs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "/dist"
+  ],
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Endunry",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Endunry/s7webserverapi.git"
+  },
+  "license": "MIT",
+  "keywords": [
+    "simatic",
+    "s7",
+    "jsonrpc",
+    "siemens",
+    "siemens-s7",
+    "jsonrpc2",
+    "siemens-s7-plcs",
+    "s7-plc",
+    "client-library",
+    "plc",
+    "sps",
+    "json-api",
+    "api"
+  ],
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "murmurhash": "^2.0.1",
+    "rxjs-http-client": "^8.0.0"
+  }
+}
