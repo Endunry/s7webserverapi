@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "murmurhash": "^2.0.1",
+    "node-localstorage": "^3.0.5",
     "rxjs-http-client": "^8.0.0"
   }
 }

@@ -7,7 +7,6 @@ import murmurhash = require("murmurhash");
 import { SubscriberTrie } from "./Trie";
 
 
-
 export class S7WebserverClient<T> implements S7JsonClient<T> {
 
     private http: RxJSHttpClient;
@@ -55,18 +54,29 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
     private ignoreCacheSubscriberTrie: SubscriberTrie<T> = new SubscriberTrie();
 
 
+    private localStorage?: Storage;
+
+    private pollTimeout: NodeJS.Timeout | undefined;
 
     constructor(private baseUrl: string, private config: S7WebserverClientConfig<T>) {
-        this.config.localStoragePrefix = this.config.localStoragePrefix ?? 's7_'
-        this.config.defaultUser = this.config.defaultUser ?? { user: 'Anonymous', password: '' };
+        this.config.localStoragePrefix = config.localStoragePrefix ?? 's7_'
+        this.config.defaultUser = config.defaultUser ?? { user: 'Anonymous', password: '' };
 
-        this.config.polling = this.config.polling ?? {
+        this.config.polling = config.polling ?? {
             slowMinDelay: 1000 * 60, // Every minute
             minDelay: 15,
             emaAlpha: 0.1,
             clamp: true
         };
 
+        this.pollingDelay = this.config.polling.minDelay;
+
+        this.http = new RxJSHttpClient();
+
+        this.localStorage = undefined;
+        if (Object.keys(this).includes("localStorage")) {
+            this.localStorage = this.localStorage;
+        }
         this.loadInitialCacheData();
         this.initPLCPoll();
 
@@ -74,11 +84,11 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
 
     private checkStoredToken(): Observable<string | undefined> {
 
-        if (localStorage.getItem(this.config.localStoragePrefix + 'token') != undefined && localStorage.getItem(this.config.localStoragePrefix + 'user') != undefined) {
+        if (this.localStorage?.getItem(this.config.localStoragePrefix + 'token') != undefined && this.localStorage?.getItem(this.config.localStoragePrefix + 'user') != undefined) {
             // Check if
             const req = {
-                body: this.getRPCMethodObject(RPCMethods.GetPermissions, undefined, 'GETPERMISSIONS'),
-                headers: { 'Content-Type': 'application/json', 'X-Auth-Token': localStorage.getItem(this.config.localStoragePrefix + 'token')! }
+                body: JSON.stringify(this.getRPCMethodObject(RPCMethods.GetPermissions, undefined, 'GETPERMISSIONS')),
+                headers: { 'Content-Type': 'application/json', 'X-Auth-Token': this.localStorage?.getItem(this.config.localStoragePrefix + 'token')! }
             }
             return this.http.post(this.baseUrl, req)
                 .pipe(
@@ -93,9 +103,9 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
                             return undefined;
                         } else {
                             this.setCurrentPermissions(response.result!);
-                            this.token = localStorage.getItem(this.config.localStoragePrefix + 'token')!;
-                            this.user = localStorage.getItem(this.config.localStoragePrefix + 'user')!;
-                            return localStorage.getItem(this.config.localStoragePrefix + 'user')!;
+                            this.token = this.localStorage?.getItem(this.config.localStoragePrefix + 'token')!;
+                            this.user = this.localStorage?.getItem(this.config.localStoragePrefix + 'user')!;
+                            return this.localStorage?.getItem(this.config.localStoragePrefix + 'user')!;
                         }
                     }));
         } else {
@@ -285,7 +295,7 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
          * An string can easily be 100+ chars long. So we hash it to a number, which reduces the data send over http.
          */
         this.hashRPCMethods(jsonRPC);
-        this.http.post(this.baseUrl, { body: Array.from(jsonRPC), headers })
+        this.http.post(this.baseUrl, { body: JSON.stringify(Array.from(jsonRPC)), headers })
             .pipe(switchMap(
                 res => res.json() as ObservableInput<RPCResponse<RPCMethods.Read | RPCMethods.Write>[]>
             ))
@@ -307,7 +317,7 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
                         return;
                     }
                     this.recalculatePollingDelay();
-                    setTimeout(() => {
+                    this.pollTimeout = setTimeout(() => {
                         this.pollData();
                     }, this.pollingDelay);
                 }
@@ -531,6 +541,18 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
         return this.cache.entryExists(key);
     }
 
+    private toggleBackSlowMode() {
+        if (this.slowPollingMode === true) {
+            // Then last poll was slowmode, so recall it with fast mode
+            if (this.pollTimeout !== undefined) {
+                clearTimeout(this.pollTimeout);
+            }
+            this.pollingDelay = this.config.polling.minDelay;
+            this.pollTimeout = setTimeout(() => this.pollData(), this.pollingDelay);
+        }
+        this.slowPollingMode = false;
+    }
+
     //MARK: GET
 
     public get<K = S7DataTypes>(key: FlattenKeys<T> | FlattenKeys<T>[], cacheMode?: CacheMethod): Observable<K> {
@@ -585,7 +607,7 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
 
         // Else
         this.readStack.push(...keys);
-
+        this.toggleBackSlowMode();
         return new Observable<K>(sub => {
             const x = this.getRequestLoadedSubject.subscribe(() => {
 
@@ -636,6 +658,8 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
     //MARK: WRITE
 
     public write(key: FlattenKeys<T>, value: S7DataTypes): Observable<S7DataTypes> {
+        this.toggleBackSlowMode();
+
         return this.writeTransactionHandler.createTransaction(key, value);
     }
 
@@ -653,12 +677,22 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
                 sub.next({ value: this.concatenateCacheFromKeys(keys) as K, changedKey: '' });
             }
             keys.forEach(key => {
+                if (!subscriberObject.has(key)) {
+                    subscriberObject.insert(key);
+                }
+                subscriberObject.incrementSubscriberCount(key);
+                if (this.subscriberCountMap.has(key)) {
+                    this.subscriberCountMap.set(key, this.subscriberCountMap.get(key)! + 1);
+                } else {
+                    this.subscriberCountMap.set(key, 1);
+                }
                 const subscription = subscriberObject.get(key)!.subscribe(value => {
                     sub.next({ value: this.concatenateCacheFromKeys(keys) as K, changedKey: value.changedKey })
                 });
                 x.push(subscription);
 
             })
+            this.toggleBackSlowMode();
 
             return () => {
                 for (const key of keys) {
@@ -694,9 +728,9 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: [
+            body: JSON.stringify([
                 this.getRPCMethodObject(RPCMethods.Login, { user, password }, 'LOGIN'), this.getRPCMethodObject(RPCMethods.GetPermissions, undefined, 'GETPERMISSIONS')
-            ]
+            ])
         }
         return this.http.post(this.baseUrl, req).pipe(
             switchMap(res => res.json() as ObservableInput<[RPCResponse<LoginResult>, RPCResponse<GetPermissionsResult>]>)
@@ -711,8 +745,8 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
                     const permissionResult = response[1];
                     this.token = loginResponse.result!.token;
                     this.user = user;
-                    localStorage.setItem(this.config.localStoragePrefix + 'token', this.token);
-                    localStorage.setItem(this.config.localStoragePrefix + 'user', this.user);
+                    this.localStorage?.setItem(this.config.localStoragePrefix + 'token', this.token);
+                    this.localStorage?.setItem(this.config.localStoragePrefix + 'user', this.user);
                     this.setCurrentPermissions(permissionResult.result!);
                     return true;
                 }))

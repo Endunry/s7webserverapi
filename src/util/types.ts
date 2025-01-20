@@ -75,7 +75,7 @@ export interface S7WebserverClientConfig<T> {
 }
 
 export type PrefixSubstitutionMap<T> = {
-    [dbName in FlattenKeys<T>]?: FlattenKeys<T>;
+    [dbName in FlattenKeys<T>]?: string;
 }
 
 export type RPCVarTypeSimple = number | string | boolean;
