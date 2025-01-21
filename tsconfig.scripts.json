@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "ESNext",
+    "outDir": "./dist/scripts"
+  },
+
+  "include": ["scripts/**/*.ts"],
+  "exclude": ["src/**/*"]
+}

@@ -11,7 +11,7 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
 
     private http: RxJSHttpClient;
     private connectionErrorObservable = new Subject<VoidFunction>();
-    public plcConnectionReadySubject: ReplaySubject<boolean> = new ReplaySubject<boolean>();
+    public onPlcConnectionReady: ReplaySubject<boolean> = new ReplaySubject<boolean>();
 
     private loaded = false;
     private user: string = '';
@@ -77,9 +77,13 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
         if (Object.keys(this).includes("localStorage")) {
             this.localStorage = this.localStorage;
         }
+
+    }
+
+    public start() {
         this.loadInitialCacheData();
         this.initPLCPoll();
-
+        return this.onPlcConnectionReady.asObservable();
     }
 
     private checkStoredToken(): Observable<string | undefined> {
@@ -195,7 +199,7 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
     private handleRPCResponse(responses: RPCResponse<RPCResults>[]) {
 
         if (this.loaded === false) {
-            this.plcConnectionReadySubject.next(true);
+            this.onPlcConnectionReady.next(true);
             this.loaded = true;
         }
 
@@ -657,10 +661,10 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
 
     //MARK: WRITE
 
-    public write(key: FlattenKeys<T>, value: S7DataTypes): Observable<S7DataTypes> {
+    public write<K = S7DataTypes>(key: FlattenKeys<T>, value: K): Observable<S7DataTypes> {
         this.toggleBackSlowMode();
 
-        return this.writeTransactionHandler.createTransaction(key, value);
+        return this.writeTransactionHandler.createTransaction(key, value as S7DataTypes);
     }
 
 

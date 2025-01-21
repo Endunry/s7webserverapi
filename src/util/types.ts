@@ -28,7 +28,7 @@ export type S7DataTypes = string | number | boolean | object | S7DataTypes[] | {
 
 export interface S7JsonClient<T> {
     get<K = S7DataTypes>(key: FlattenKeys<T> | FlattenKeys<T>[], cacheMode?: CacheMethod): Observable<K>
-    write(key: FlattenKeys<T>, value: S7DataTypes): Observable<S7DataTypes>;
+    write<K = S7DataTypes>(key: FlattenKeys<T>, value: K): Observable<S7DataTypes>;
     subscribe<K = S7DataTypes>(key: FlattenKeys<T> | FlattenKeys<T>[], ignoreCache?: boolean): Observable<{ value: K, changedKey: string }>;
     currentUser: string;
     can(permission: PlcPermissions): boolean;
