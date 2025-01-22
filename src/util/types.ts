@@ -1,8 +1,5 @@
 import { Observable } from "rxjs";
 
-
-
-
 /**
  * When having a nested object T, this will create a type that Flattens the keys.
  * e.g. for {a: {b: {c: 0}}} it will create the keys:
@@ -13,7 +10,9 @@ import { Observable } from "rxjs";
  * @template T
  * @template {string} [Prefix=""]
  */
-export type FlattenKeys<T, Prefix extends string = ""> = T extends object
+export type FlattenKeys<T, Prefix extends string = ""> =
+    T extends "Structureless" ? string :
+    T extends object
     ? {
         [K in keyof T]-?: K extends string | number
         ? `${Prefix}${K & string}` | FlattenKeys<T[K], `${Prefix}${K & string}.`>
@@ -48,7 +47,7 @@ export interface S7WebserverClientConfig<T> {
     /*
     Internal Structure of the PLC. Expects a JSON-String-Map of at least one PLC-DB with its keys and default values.
     */
-    plcStructure: { [key: string]: any },
+    plcStructure?: { [key: string]: any },
     /**
      * Settings for the polling-process.
      * Uses Exponential Moving Average to control the polling-delay.

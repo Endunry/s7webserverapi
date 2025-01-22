@@ -7,7 +7,7 @@ import murmurhash = require("murmurhash");
 import { SubscriberTrie } from "./Trie";
 
 
-export class S7WebserverClient<T> implements S7JsonClient<T> {
+export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
 
     private http: RxJSHttpClient;
     private connectionErrorObservable = new Subject<VoidFunction>();
@@ -29,6 +29,7 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
 
     private cache = new CacheStructure<T>();
     private pollErrorSubject = new Subject<string>();
+    private errorSubscriber = 0;
 
     private writeTransactionHandler: WriteTransactionHandler<T> = new WriteTransactionHandler<T>();
 
@@ -77,6 +78,22 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
         if (Object.keys(this).includes("localStorage")) {
             this.localStorage = this.localStorage;
         }
+        this.initDefaultErrorHandler();
+
+    }
+
+    public get onPollError() {
+
+        this.errorSubscriber++;
+        return new Observable(sub => {
+
+            const x = this.pollErrorSubject.subscribe(err => sub.next(err));
+            () => {
+                x.unsubscribe();
+                this.errorSubscriber--;
+            }
+        })
+
 
     }
 
@@ -262,12 +279,15 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
     private handleRPCResponseError(id: string, error: { code: RPCErrorCode, message: string }) {
         switch (error.code) {
             case RPCErrorCode.PERMISSON_DENIED: {
-                this.pollErrorSubject.next(`Youre not allowed to execute this operation: ${id}`);
+                this.pollErrorSubject.next(`You're not allowed to execute this operation: ${id}`);
                 break;
             }
             case RPCErrorCode.ADRESS_NOT_FOUND: {
                 this.pollErrorSubject.next(`The address ${id} was not found in the PLC`);
                 break;
+            }
+            case RPCErrorCode.UNSUPPORTED_ADRESS: {
+                this.pollErrorSubject.next(`The adress ${id} is not reaching an atomic value like a Real, Int or String. But an Struct/Array. This is not supported by the API`)
             }
             default:
                 this.pollErrorSubject.next(`Error in RPC-Response with id: ${id} and error: ${error.code}: ${error.message}`);;
@@ -407,6 +427,23 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
         const plcKey = this.insertPrefixMapping(key);
         const keys = this.cache.parseFlattenedKey(plcKey);
         let ref = this.config.plcStructure;
+
+        if (ref == undefined) {
+            // This means, the user never configured the structure. So we cant fill in the details. We basically just create a read/write instruction for this key.
+
+            const plcVar = this.hmiKeyToPlcKey(key);
+            if (method === RPCMethods.Read) {
+                objectSet.add(this.getRPCMethodObject(method, { var: plcVar }, `READ:${key}`));
+            } else if (method === RPCMethods.Write) {
+                if (typeof value === 'object' || Array.isArray(value)) {
+                    throw Error(`Trying to write the value ${value} to the key ${key}. The given value is an object and not a single value. You never specified the Structure of the PLC-DBs anywhere. Thus we cant fill in the missing keys here. Either you missed something, or you need to specify the plc-Structure and pass it into the constructor-config of the S7WebserverClient (config.plcStructure).`)
+                }
+                objectSet.add(this.getRPCMethodObject(RPCMethods.Write, { value: value ?? '', var: plcVar }, `WRITE:${key}:${writeTransaction?.id}`));
+                writeTransaction?.addDependentKey(key);
+            }
+
+            return;
+        }
 
         for (const key of keys) {
             ref = CacheStructure.getNextReference(ref, key.toString());
@@ -665,6 +702,14 @@ export class S7WebserverClient<T> implements S7JsonClient<T> {
         this.toggleBackSlowMode();
 
         return this.writeTransactionHandler.createTransaction(key, value as S7DataTypes);
+    }
+
+    private initDefaultErrorHandler() {
+        this.pollErrorSubject.subscribe(err => {
+            if (this.errorSubscriber == 0) {
+                console.error(err);
+            }
+        })
     }
 
 

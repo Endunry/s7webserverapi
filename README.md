@@ -8,7 +8,7 @@ The library has to be aware of the PLC-Structure at build-Time (which can be dyn
 
 ### Providing the PLC-Structure
 
-To use the library, the first thing you have to do is to provide information about the Structure of the PLC, or rather the structure of the PLC that is important for the HMI/Webapplication that uitilizes the PLC-Data. This can either be done by hand (When only using a few PLC-Variables), or be done by generating some Code from exported XML-Files from the TIA-Project.
+To use the library, it is recommended that you do is to provide information about the Structure of the PLC, or rather the structure of the PLC that is important for the HMI/Webapplication that uitilizes the PLC-Data. This can either be done by hand (When only using a few PLC-Variables), or be done by generating some Code from exported XML-Files from the TIA-Project. (This can be skipped, but you'll miss some useful features like the ability to fetch Arrays and Structs or to have plcVar-autocompletion in you IDE).
 
 There are 2 things you need to provide:
 
@@ -234,10 +234,22 @@ This may be interesting to know, since when subscribing to a object-like structu
     "write_watch_table_value" | "read_syslog";
     can(permission: PlcPermissions): boolean;
     getPermissionsUpdates(): Observable<PlcPermissions[]>;
-
 ```
 
 You can either use a function to get information about the permissions of the current user, or subscribe to the updates, when a new user is logging in. With that you can control the state of the hmi, and only display some stuff if the user has enough permission.
+
+#### Api Error-Handler
+
+There is a default Error-Handler that outputs the RPC-API-Errors to console.err.
+But you can subscribe to errors manually:
+
+```ts
+    s7.onPollError.subscribe(err=>{
+        doSomethingWithErrorMessage(err);
+    })
+```
+
+The default Handler is disabled whenever you add a custom one.
 
 ## Configuration
 
