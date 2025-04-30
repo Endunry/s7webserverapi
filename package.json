@@ -1,6 +1,6 @@
 {
   "name": "s7webserverapi",
-  "version": "1.1.1",
+  "version": "1.2.2",
   "description": "Unofficial Simatic-S7-Webserver JSON-RPC-API Client for S7-1200/1500 PLCs",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

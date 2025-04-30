@@ -9,65 +9,65 @@ import { SubscriberTrie } from "./Trie";
 
 export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
 
-    private http: RxJSHttpClient;
-    private connectionErrorObservable = new Subject<VoidFunction>();
+    protected http: RxJSHttpClient;
+    protected connectionErrorObservable = new Subject<VoidFunction>();
     public onPlcConnectionReady: ReplaySubject<boolean> = new ReplaySubject<boolean>();
 
-    private loaded = false;
-    private user: string = '';
-    private token: string = '';
+    protected loaded = false;
+    protected user: string = '';
+    protected token: string = '';
 
-    private permissionMap: Map<PlcPermissions, boolean> = new Map();
-    private permissionsSubject: ReplaySubject<PlcPermissions[]> = new ReplaySubject<PlcPermissions[]>();
+    protected permissionMap: Map<PlcPermissions, boolean> = new Map();
+    protected permissionsSubject: ReplaySubject<PlcPermissions[]> = new ReplaySubject<PlcPermissions[]>();
 
-    private lastPollingTime: Date = new Date();
-    private pollingDelay: number;
-    private slowPollingMode: boolean = false;
+    protected lastPollingTime: Date = new Date();
+    protected pollingDelay: number;
+    protected slowPollingMode: boolean = false;
 
-    private readStack: FlattenKeys<T>[] = [];
-    private lastReadStack: FlattenKeys<T>[] = [];
+    protected readStack: FlattenKeys<T>[] = [];
+    protected lastReadStack: FlattenKeys<T>[] = [];
 
-    private cache = new CacheStructure<T>();
-    private pollErrorSubject = new Subject<string>();
-    private errorSubscriber = 0;
+    protected cache = new CacheStructure<T>();
+    protected pollErrorSubject = new Subject<string>();
+    protected errorSubscriber = 0;
 
-    private writeTransactionHandler: WriteTransactionHandler<T> = new WriteTransactionHandler<T>();
-    private getTransactionHandler: GetTransactionHandler<T> = new GetTransactionHandler<T>(this.writeTransactionHandler, this.cache);
+    protected writeTransactionHandler: WriteTransactionHandler<T> = new WriteTransactionHandler<T>();
+    protected getTransactionHandler: GetTransactionHandler<T> = new GetTransactionHandler<T>(this.writeTransactionHandler, this.cache);
 
-    private subscriberCountMap: Map<FlattenKeys<T>, number> = new Map();
-    private rpcRequestHashedKeyMap = new Map<number, string>();
+    protected subscriberCountMap: Map<FlattenKeys<T>, number> = new Map();
+    protected rpcRequestHashedKeyMap = new Map<number, string>();
 
-    private getRequestLoadedSubject: Subject<boolean> = new Subject<boolean>();
+    protected getRequestLoadedSubject: Subject<boolean> = new Subject<boolean>();
     /**
      * Because we use flattened keys, we use a Trie-Datastructure to keep track of the subscribers.
      * When a leaf changes its value we can use the prefix-property of the trie to also call all the parents of the leaf.
      *
-     * @private
+     * @protected
      * @type {SubscriberTrie<typeof data>}
      */
-    private subscriberTrie: SubscriberTrie<T> = new SubscriberTrie();
+    protected subscriberTrie: SubscriberTrie<T> = new SubscriberTrie();
 
     /**
      * Subscriber trie for non cached values.
      *
-     * @private
+     * @protected
      * @type {SubscriberTrie<typeof data>}
      */
-    private ignoreCacheSubscriberTrie: SubscriberTrie<T> = new SubscriberTrie();
+    protected ignoreCacheSubscriberTrie: SubscriberTrie<T> = new SubscriberTrie();
 
-    private browseFilesMap: Map<string, Subject<FileBrowseResult[]>> = new Map<string, Subject<FileBrowseResult[]>>();
-    private downloadFileMap: Map<string, Subject<string>> = new Map();
+    protected browseFilesMap: Map<string, Subject<FileBrowseResult[]>> = new Map<string, Subject<FileBrowseResult[]>>();
+    protected downloadFileMap: Map<string, Subject<string>> = new Map();
 
-    private browseTicketsCounter = 0;
-    private browseTicketsMap: Map<string, Subject<BrowseTicketsResult>> = new Map();
-    private closeTicketMap: Map<string, Subject<CloseTicketResult>> = new Map();
+    protected browseTicketsCounter = 0;
+    protected browseTicketsMap: Map<string, Subject<BrowseTicketsResult>> = new Map();
+    protected closeTicketMap: Map<string, Subject<CloseTicketResult>> = new Map();
 
 
-    private localStorage?: Storage;
+    protected localStorage?: Storage;
 
-    private pollTimeout: NodeJS.Timeout | undefined;
-    private ticketApiUrl: string;
-    constructor(private baseUrl: string, private config: S7WebserverClientConfig<T>, ticketApiUrl?: string) {
+    protected pollTimeout: NodeJS.Timeout | undefined;
+    protected ticketApiUrl: string;
+    constructor(protected baseUrl: string, protected config: S7WebserverClientConfig<T>, ticketApiUrl?: string) {
         this.config.localStoragePrefix = config.localStoragePrefix ?? 's7_'
         this.config.defaultUser = config.defaultUser ?? { user: 'Anonymous', password: '' };
 
@@ -96,7 +96,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
 
     }
 
-    private getFileDownloadTicket(path: string): Observable<string> {
+    protected getFileDownloadTicket(path: string): Observable<string> {
         return new Observable(subscriber => {
             if (this.downloadFileMap.has(path)) {
                 subscriber.error(`${path} already has an active download-request`);
@@ -111,7 +111,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         })
     }
 
-    private downloadTicket(ticketId: string, type: 'text' | 'arrayBuffer' | 'json' = 'text'): Observable<string> {
+    protected downloadTicket(ticketId: string, type: 'text' | 'arrayBuffer' | 'json' = 'text'): Observable<string> {
         return new Observable(subscriber => {
             this.checkStoredToken().pipe(take(1)).subscribe(() => {
                 const x = this.http.post(this.ticketApiUrl + `?id=${ticketId}`, {
@@ -272,7 +272,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         return this.onPlcConnectionReady.asObservable();
     }
 
-    private checkStoredToken(): Observable<string | undefined> {
+    protected checkStoredToken(): Observable<string | undefined> {
 
         if (this.localStorage?.getItem(this.config.localStoragePrefix + 'token') != undefined && this.localStorage?.getItem(this.config.localStoragePrefix + 'user') != undefined) {
             // Check if
@@ -311,7 +311,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
    * E.g. if the user logs out, we may want to redirect them if theyre currently on a page they shouldnt access.
    * @param permissions
    */
-    private setCurrentPermissions(permissions: GetPermissionsResult) {
+    protected setCurrentPermissions(permissions: GetPermissionsResult) {
 
         this.permissionMap.clear();
         const perms: PlcPermissions[] = [];
@@ -322,13 +322,13 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         this.permissionsSubject.next(perms);
     }
 
-    private getRPCMethodObject(method: RPCMethods.Ping, params: PingParams, id?: string): RPCMethodObject;
-    private getRPCMethodObject(method: RPCMethods.Read, params: ReadParams, id?: string): RPCMethodObject;
-    private getRPCMethodObject(method: RPCMethods.Login, params: LoginParams, id?: string): RPCMethodObject;
-    private getRPCMethodObject(method: RPCMethods.GetCertificateUrl, params: GetCertificateUrlParams, id?: string): RPCMethodObject;
-    private getRPCMethodObject(method: RPCMethods.Write, params: WriteParams, id?: string): RPCMethodObject;
-    private getRPCMethodObject(method: RPCMethods.GetPermissions, params: GetPermissionsParams, id?: string): RPCMethodObject;
-    private getRPCMethodObject(method: RPCMethods, params: Params, id: string = '0'): RPCMethodObject {
+    protected getRPCMethodObject(method: RPCMethods.Ping, params: PingParams, id?: string): RPCMethodObject;
+    protected getRPCMethodObject(method: RPCMethods.Read, params: ReadParams, id?: string): RPCMethodObject;
+    protected getRPCMethodObject(method: RPCMethods.Login, params: LoginParams, id?: string): RPCMethodObject;
+    protected getRPCMethodObject(method: RPCMethods.GetCertificateUrl, params: GetCertificateUrlParams, id?: string): RPCMethodObject;
+    protected getRPCMethodObject(method: RPCMethods.Write, params: WriteParams, id?: string): RPCMethodObject;
+    protected getRPCMethodObject(method: RPCMethods.GetPermissions, params: GetPermissionsParams, id?: string): RPCMethodObject;
+    protected getRPCMethodObject(method: RPCMethods, params: Params, id: string = '0'): RPCMethodObject {
         return {
             jsonrpc: "2.0",
             method: method,
@@ -364,13 +364,13 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
 
     }
 
-    private hashRPCMethods(set: Set<RPCMethodObject>) {
+    protected hashRPCMethods(set: Set<RPCMethodObject>) {
         for (const setEntry of set) {
             setEntry.id = this.getHashedId(setEntry.id).toString();
         }
     }
 
-    private getHashedId(humanReadableId: string): number {
+    protected getHashedId(humanReadableId: string): number {
         let hashedId = murmurhash(humanReadableId);
         let counter = 0;
         while (this.rpcRequestHashedKeyMap.has(hashedId) && this.rpcRequestHashedKeyMap.get(hashedId) !== humanReadableId) {
@@ -382,7 +382,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         return hashedId;
     }
 
-    private handleRPCResponse(responses: RPCResponse<RPCResults>[]) {
+    protected handleRPCResponse(responses: RPCResponse<RPCResults>[]) {
 
         if (this.loaded === false) {
             this.onPlcConnectionReady.next(true);
@@ -422,7 +422,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
 
     }
 
-    private handleRPCResponseRead(key: FlattenKeys<T>, reponse: RPCResponse<ReadResult>) {
+    protected handleRPCResponseRead(key: FlattenKeys<T>, reponse: RPCResponse<ReadResult>) {
         const oldValue = this.cache.getCopy(key);
         this.cache.writeEntry(key, reponse.result);
         if (oldValue !== this.cache.getReference(key)) {
@@ -431,7 +431,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         this.ignoreCacheSubscriberTrie.notifySubscriber(key, this.cache.cacheObject);
     }
 
-    private handleRPCResponseWrite(key: FlattenKeys<T>, response: RPCResponse<WriteResult>, writeTransactionId: number) {
+    protected handleRPCResponseWrite(key: FlattenKeys<T>, response: RPCResponse<WriteResult>, writeTransactionId: number) {
         const oldValue = this.cache.getCopy(key);
         this.writeTransactionHandler.resolveDependentKey(writeTransactionId, key, response.result as boolean, this.cache);
         if (oldValue !== this.cache.getReference(key)) {
@@ -445,7 +445,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
    * @param id rpc-id
    * @param error RPC-Error Object
    */
-    private handleRPCResponseError(id: string, error: { code: RPCErrorCode, message: string }) {
+    protected handleRPCResponseError(id: string, error: { code: RPCErrorCode, message: string }) {
         switch (error.code) {
             case RPCErrorCode.PERMISSON_DENIED: {
                 this.pollErrorSubject.next(`You're not allowed to execute this operation: ${id}`);
@@ -519,20 +519,20 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
 
     }
 
-    private recalculatePollingDelay() {
+    protected recalculatePollingDelay() {
         this.exponentialMovingAverage();
         if (this.config.polling.clamp === true) {
             this.clampPollingDelay();
         }
     }
 
-    private exponentialMovingAverage() {
+    protected exponentialMovingAverage() {
         const timeDiff = new Date().getTime() - this.lastPollingTime.getTime();
         const emaAlpha = this.config.polling.emaAlpha
         this.pollingDelay = emaAlpha * timeDiff + (1 - emaAlpha) * this.pollingDelay;
     }
 
-    private clampPollingDelay() {
+    protected clampPollingDelay() {
         if (this.slowPollingMode) {
             this.pollingDelay = Math.max(this.config.polling.slowMinDelay, this.pollingDelay);
         } else {
@@ -544,7 +544,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
    * Collects all the different RPC-Methods that should be called on a polling-cycle.
    *
    */
-    private collectRPCMethodObjects(): Set<RPCMethodObject> {
+    protected collectRPCMethodObjects(): Set<RPCMethodObject> {
         const set = new Set<RPCMethodObject>();
         this.collectGetRPCMethodObjects(set);
         this.collectWriteRPCMethodObjects(set);
@@ -554,7 +554,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         return set;
     }
 
-    private collectWriteRPCMethodObjects(objectSet: Set<RPCMethodObject>): void {
+    protected collectWriteRPCMethodObjects(objectSet: Set<RPCMethodObject>): void {
         this.writeTransactionHandler.getAllTransactionsKeys().forEach(key => {
             const transaction = this.writeTransactionHandler.getTransaction(key);
             if (transaction == undefined) {
@@ -564,7 +564,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         });
     }
 
-    private collectSubscribeRPCMethodObjects(objectSet: Set<RPCMethodObject>): void {
+    protected collectSubscribeRPCMethodObjects(objectSet: Set<RPCMethodObject>): void {
         Array.from(this.subscriberCountMap.entries()).filter(([, value]) => value > 0).forEach(([key,]) => {
             // For every key in the subscriberCountMap that has a positive-counter value;
             this.collectChildrenKeys(key, objectSet, RPCMethods.Read, Infinity);
@@ -579,7 +579,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
      * In case we never successfully read, we save the lastReadStack and delete it after a successful polling-cycle. That way, if we retry the connection, we do not lose the read information.
      * @param objectSet
      */
-    private collectGetRPCMethodObjects(objectSet: Set<RPCMethodObject>): void {
+    protected collectGetRPCMethodObjects(objectSet: Set<RPCMethodObject>): void {
 
         this.getTransactionHandler.getAllTransactionsKeys().forEach(getTransactionId => {
             const transaction = this.getTransactionHandler.getTransaction(getTransactionId);
@@ -607,7 +607,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         // this.readStack = [];
     }
 
-    private collectChildrenKeys(key: FlattenKeys<T>, objectSet: Set<RPCMethodObject>, method: RPCMethods.Read | RPCMethods.Write, depth: number, value?: S7DataTypes, transaction?: WriteTransaction<T> | GetTransaction<T>): void {
+    protected collectChildrenKeys(key: FlattenKeys<T>, objectSet: Set<RPCMethodObject>, method: RPCMethods.Read | RPCMethods.Write, depth: number, value?: S7DataTypes, transaction?: WriteTransaction<T> | GetTransaction<T>): void {
 
         const plcKey = this.insertPrefixMapping(key);
         const keys = this.cache.parseFlattenedKey(plcKey);
@@ -645,7 +645,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
 
     }
 
-    private _collectChildrenKeys(wholeKey: FlattenKeys<T>, objectSet: Set<RPCMethodObject>, ref: S7DataTypes, newKey: string, method: RPCMethods.Read | RPCMethods.Write, depth: number, value?: S7DataTypes, transaction?: WriteTransaction<T> | GetTransaction<T>) {
+    protected _collectChildrenKeys(wholeKey: FlattenKeys<T>, objectSet: Set<RPCMethodObject>, ref: S7DataTypes, newKey: string, method: RPCMethods.Read | RPCMethods.Write, depth: number, value?: S7DataTypes, transaction?: WriteTransaction<T> | GetTransaction<T>) {
 
         if (depth < 0) {
             console.warn(`Depth reached!: ${wholeKey}`);
@@ -711,7 +711,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
      * @param key Hmi-Key
      * @returns
      */
-    private hmiKeyToPlcKey(key: FlattenKeys<T>): string {
+    protected hmiKeyToPlcKey(key: FlattenKeys<T>): string {
         const mappedKey = this.insertPrefixMapping(key);
         return mappedKey.split('.').map((element) => isNaN(Number(element)) ? element : `[${element}]`).join('.').replace(/\.\[/g, '[');
 
@@ -724,7 +724,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
        * @param key Hmi-Key
        * @returns PLC-Key
        */
-    private insertPrefixMapping(key: FlattenKeys<T>): string {
+    protected insertPrefixMapping(key: FlattenKeys<T>): string {
         // Go through the whole this.hmiPlcMapping and check if the key is a prefix of any key in the mapping. If it is, replace the prefix with the mapping. Go through the whole list first and look for the longest prefix. Use that one.
         let longestPrefix = "";
         for (const mappingKey in this.config.prefixSubstitutionMap) {
@@ -750,7 +750,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
  *
  * @param objectSet Object set that stores the RPC-Methods
  */
-    private collectStaticRPCMethodObjects(objectSet: Set<RPCMethodObject>): void {
+    protected collectStaticRPCMethodObjects(objectSet: Set<RPCMethodObject>): void {
         if (objectSet.size === 0) {
             this.slowPollingMode = true;
             objectSet.add(this.getRPCMethodObject(RPCMethods.Ping, undefined, 'PING'));
@@ -763,14 +763,14 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
      * Calls the get-Function for each configured initial-Cache key.
      * @returns
      */
-    private loadInitialCacheData() {
+    protected loadInitialCacheData() {
         if (this.config.initialCacheKeys == undefined) return;
         for (const cacheKey of this.config.initialCacheKeys) {
             this.get(cacheKey).pipe(take(1)).subscribe();
         }
     }
 
-    private hmiKeysLoaded(key: FlattenKeys<T> | FlattenKeys<T>[]): boolean {
+    protected hmiKeysLoaded(key: FlattenKeys<T> | FlattenKeys<T>[]): boolean {
         if (Array.isArray(key)) {
             for (const singleKey of key) {
                 if (!this.cache.entryExists(singleKey)) {
@@ -782,7 +782,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         return this.cache.entryExists(key);
     }
 
-    private toggleBackSlowMode() {
+    protected toggleBackSlowMode() {
         if (this.slowPollingMode === true) {
             // Then last poll was slowmode, so recall it with fast mode
             if (this.pollTimeout !== undefined) {
@@ -803,14 +803,14 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
 
     }
 
-    // private _getFromCache<K>(keys: FlattenKeys<T>[]) {
+    // protected _getFromCache<K>(keys: FlattenKeys<T>[]) {
     //     return new Observable<K>(subscriber => {
     //         subscriber.next(this.concatenateCacheFromKeys(keys) as K);
     //         subscriber.complete();
     //     })
     // }
 
-    private concatenateCacheFromKeys(keys: FlattenKeys<T>[]) {
+    protected concatenateCacheFromKeys(keys: FlattenKeys<T>[]) {
         if (keys.length === 1) {
             return this.cache.getCopy(keys[0]) as S7DataTypes;
         }
@@ -841,7 +841,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         return this.writeTransactionHandler.createTransaction([key], value as S7DataTypes);
     }
 
-    private initDefaultErrorHandler() {
+    protected initDefaultErrorHandler() {
         this.pollErrorSubject.subscribe(err => {
             if (this.errorSubscriber == 0) {
                 console.error(err);
