@@ -26,7 +26,7 @@ export type PlcPermissions = "read_diagnostics" | "read_value" | "write_value" |
 export type S7DataTypes = string | number | boolean | object | S7DataTypes[] | { [key: string]: S7DataTypes };
 
 export interface S7JsonClient<T> {
-    get<K = S7DataTypes>(key: FlattenKeys<T> | FlattenKeys<T>[], cacheMode?: CacheMethod): Observable<K>
+    get<K = S7DataTypes>(key: FlattenKeys<T> | FlattenKeys<T>[], cacheMode?: CacheMethod, depth?: number): Observable<K>
     write<K = S7DataTypes>(key: FlattenKeys<T>, value: K): Observable<S7DataTypes>;
     subscribe<K = S7DataTypes>(key: FlattenKeys<T> | FlattenKeys<T>[], ignoreCache?: boolean): Observable<{ value: K, changedKey: string }>;
     currentUser: string;

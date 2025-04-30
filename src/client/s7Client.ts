@@ -1,7 +1,7 @@
 import { map, mergeMap, Observable, ObservableInput, ReplaySubject, Subject, Subscription, switchMap, take } from "rxjs";
 import { CacheMethod, FlattenKeys, GetCertificateUrlParams, GetPermissionsParams, GetPermissionsResult, LoginParams, LoginResult, Params, PingParams, PlcPermissions, ReadParams, ReadResult, RPCErrorCode, RPCLoginError, RPCMethodObject, RPCMethods, RPCResponse, RPCResults, S7DataTypes, S7JsonClient, S7WebserverClientConfig, WriteParams, WriteResult } from "../util/types";
 import { RxJSHttpClient } from "rxjs-http-client";
-import { WriteTransaction, WriteTransactionHandler } from "./WriteTransaction";
+import { GetTransaction, GetTransactionHandler, WriteTransaction, WriteTransactionHandler } from "./WriteTransaction";
 import { CacheStructure } from "./CacheStructure";
 import murmurhash = require("murmurhash");
 import { SubscriberTrie } from "./Trie";
@@ -32,6 +32,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
     private errorSubscriber = 0;
 
     private writeTransactionHandler: WriteTransactionHandler<T> = new WriteTransactionHandler<T>();
+    private getTransactionHandler: GetTransactionHandler<T> = new GetTransactionHandler<T>(this.writeTransactionHandler, this.cache);
 
     private subscriberCountMap: Map<FlattenKeys<T>, number> = new Map();
     private rpcRequestHashedKeyMap = new Map<number, string>();
@@ -387,15 +388,18 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
 
     private collectWriteRPCMethodObjects(objectSet: Set<RPCMethodObject>): void {
         this.writeTransactionHandler.getAllTransactionsKeys().forEach(key => {
-            const transaction = this.writeTransactionHandler.getTransaction(key)!;
-            this.collectChildrenKeys(transaction.key, objectSet, RPCMethods.Write, transaction.value, transaction);
+            const transaction = this.writeTransactionHandler.getTransaction(key);
+            if (transaction == undefined) {
+                throw new Error(`Error while trying to collect the write RPC-Method Objects. The transaction with id ${key} is undefined.`);
+            }
+            this.collectChildrenKeys(transaction.keys[0], objectSet, RPCMethods.Write, Infinity, transaction.value, transaction);
         });
     }
 
     private collectSubscribeRPCMethodObjects(objectSet: Set<RPCMethodObject>): void {
         Array.from(this.subscriberCountMap.entries()).filter(([, value]) => value > 0).forEach(([key,]) => {
             // For every key in the subscriberCountMap that has a positive-counter value;
-            this.collectChildrenKeys(key, objectSet, RPCMethods.Read);
+            this.collectChildrenKeys(key, objectSet, RPCMethods.Read, Infinity);
         });
     }
 
@@ -409,20 +413,33 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
      */
     private collectGetRPCMethodObjects(objectSet: Set<RPCMethodObject>): void {
 
-        this.lastReadStack.forEach((element) => {
-            this.collectChildrenKeys(element, objectSet, RPCMethods.Read);
+        this.getTransactionHandler.getAllTransactionsKeys().forEach(getTransactionId => {
+            const transaction = this.getTransactionHandler.getTransaction(getTransactionId);
+            if (transaction == undefined) {
+                throw new Error(`Error while trying to collect the get RPC-Method Objects. The transaction with id ${getTransactionId} is undefined.`);
+            }
+            for (const key of transaction.internalReadStack) {
+                this.collectChildrenKeys(key[0], objectSet, RPCMethods.Read, key[1], transaction.value, transaction);
+            }
+
+
+
         });
 
-        this.readStack.forEach((element) => {
-            this.collectChildrenKeys(element, objectSet, RPCMethods.Read);
-        });
+        // this.lastReadStack.forEach((element) => {
+        //     this.collectChildrenKeys(element, objectSet, RPCMethods.Read);
+        // });
 
-        // Clear the stack
-        this.lastReadStack = this.readStack;
-        this.readStack = [];
+        // this.readStack.forEach((element) => {
+        //     this.collectChildrenKeys(element, objectSet, RPCMethods.Read);
+        // });
+
+        // // Clear the stack
+        // this.lastReadStack = this.readStack;
+        // this.readStack = [];
     }
 
-    private collectChildrenKeys(key: FlattenKeys<T>, objectSet: Set<RPCMethodObject>, method: RPCMethods.Read | RPCMethods.Write, value?: S7DataTypes, writeTransaction?: WriteTransaction<T>): void {
+    private collectChildrenKeys(key: FlattenKeys<T>, objectSet: Set<RPCMethodObject>, method: RPCMethods.Read | RPCMethods.Write, depth: number, value?: S7DataTypes, transaction?: WriteTransaction<T> | GetTransaction<T>): void {
 
         const plcKey = this.insertPrefixMapping(key);
         const keys = this.cache.parseFlattenedKey(plcKey);
@@ -433,13 +450,18 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
 
             const plcVar = this.hmiKeyToPlcKey(key);
             if (method === RPCMethods.Read) {
-                objectSet.add(this.getRPCMethodObject(method, { var: plcVar }, `READ:${key}`));
+                if (transaction != undefined) {
+                    objectSet.add(this.getRPCMethodObject(method, { var: plcVar }, `READ:${key}:${transaction?.id}`));
+                    transaction?.addDependentKey(key);
+                } else {
+                    objectSet.add(this.getRPCMethodObject(method, { var: plcVar }, `READ:${key}`));
+                }
             } else if (method === RPCMethods.Write) {
                 if (typeof value === 'object' || Array.isArray(value)) {
                     throw Error(`Trying to write the value ${value} to the key ${key}. The given value is an object and not a single value. You never specified the Structure of the PLC-DBs anywhere. Thus we cant fill in the missing keys here. Either you missed something, or you need to specify the plc-Structure and pass it into the constructor-config of the S7WebserverClient (config.plcStructure).`)
                 }
-                objectSet.add(this.getRPCMethodObject(RPCMethods.Write, { value: value ?? '', var: plcVar }, `WRITE:${key}:${writeTransaction?.id}`));
-                writeTransaction?.addDependentKey(key);
+                objectSet.add(this.getRPCMethodObject(RPCMethods.Write, { value: value ?? '', var: plcVar }, `WRITE:${key}:${transaction?.id}`));
+                transaction?.addDependentKey(key);
             }
 
             return;
@@ -450,16 +472,21 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         }
 
         // Call the recursion-call with newKey = '', so it just takes the first key as entrance
-        this._collectChildrenKeys(key, objectSet, ref, '', method, value, writeTransaction);
+        this._collectChildrenKeys(key, objectSet, ref, '', method, depth, value, transaction);
 
 
     }
 
-    private _collectChildrenKeys(wholeKey: FlattenKeys<T>, objectSet: Set<RPCMethodObject>, ref: S7DataTypes, newKey: string, method: RPCMethods.Read | RPCMethods.Write, value?: S7DataTypes, writeTransaction?: WriteTransaction<T>) {
+    private _collectChildrenKeys(wholeKey: FlattenKeys<T>, objectSet: Set<RPCMethodObject>, ref: S7DataTypes, newKey: string, method: RPCMethods.Read | RPCMethods.Write, depth: number, value?: S7DataTypes, transaction?: WriteTransaction<T> | GetTransaction<T>) {
+
+        if (depth < 0) {
+            console.warn(`Depth reached!: ${wholeKey}`);
+            return;
+        }
 
         if (
             method === RPCMethods.Write &&
-            (value == undefined || writeTransaction == undefined)
+            (value == undefined || transaction == undefined)
         ) { throw new Error(`Error while trying to fill in children keys for JSONRPC-Request. Trying to create JSONRPC-Method Object to write to ${wholeKey}, but the relative value or writeTransaction is undefined!`) }
 
         ref = CacheStructure.getNextReference(ref, newKey);
@@ -471,7 +498,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
                 if (ref[i] === undefined) {
                     ref[i] = '';
                 }
-                this._collectChildrenKeys(newKey, objectSet, ref, i.toString(), method, value, writeTransaction);
+                this._collectChildrenKeys(newKey, objectSet, ref, i.toString(), method, depth - 1, value, transaction);
             }
             return;
         }
@@ -479,7 +506,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         if (typeof ref === 'object') {
             for (const key in ref) {
                 const newKey = wholeKey + `.${key}` as FlattenKeys<T>;
-                this._collectChildrenKeys(newKey, objectSet, ref, key, method, value, writeTransaction);
+                this._collectChildrenKeys(newKey, objectSet, ref, key, method, depth - 1, value, transaction);
             }
             return;
         }
@@ -491,13 +518,18 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         const plcVar = this.hmiKeyToPlcKey(wholeKey);
 
         if (method === RPCMethods.Read) {
-            objectSet.add(this.getRPCMethodObject(method, { var: plcVar }, `READ:${wholeKey}`));
+            if (transaction != undefined) {
+                objectSet.add(this.getRPCMethodObject(method, { var: plcVar }, `READ:${wholeKey}:${transaction?.id}`));
+                transaction?.addDependentKey(wholeKey);
+            } else {
+                objectSet.add(this.getRPCMethodObject(method, { var: plcVar }, `READ:${wholeKey}`));
+            }
         } else if (method === RPCMethods.Write) {
             if (typeof value === 'object' || Array.isArray(value)) {
                 throw Error(`Error while trying to fill in children keys for JSONRPC-Request. Trying to create JSONRPC-Write-Method to key "${newKey}" (wholeKey: ${wholeKey}). According to the PLC-Structure this key is atomic and shouldnt be of type Array|Object. However the provided value: ${JSON.stringify(value)} appears to not be atomic.`)
             }
-            objectSet.add(this.getRPCMethodObject(RPCMethods.Write, { value: value ?? '', var: plcVar }, `WRITE:${wholeKey}:${writeTransaction?.id}`));
-            writeTransaction?.addDependentKey(wholeKey);
+            objectSet.add(this.getRPCMethodObject(RPCMethods.Write, { value: value ?? '', var: plcVar }, `WRITE:${wholeKey}:${transaction?.id}`));
+            transaction?.addDependentKey(wholeKey);
         }
 
 
@@ -596,82 +628,19 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
 
     //MARK: GET
 
-    public get<K = S7DataTypes>(key: FlattenKeys<T> | FlattenKeys<T>[], cacheMode?: CacheMethod): Observable<K> {
+    public get<K = S7DataTypes>(key: FlattenKeys<T> | FlattenKeys<T>[], cacheMode?: CacheMethod, depth: number = Infinity): Observable<K> {
         const keys: FlattenKeys<T>[] = Array.isArray(key) ? key : [key];
 
-        const loaded = this.hmiKeysLoaded(keys);
+        return this.getTransactionHandler.createTransaction(keys, cacheMode, depth) as Observable<K>;
 
-        const isCurrentlyWriting = this.writeTransactionHandler.isCurrentlyWriting(keys);
-
-        const couldUseCache =
-            cacheMode === CacheMethod.USE_CACHE ||
-            ((cacheMode === CacheMethod.WAIT_FOR_WRITE || cacheMode === CacheMethod.USE_WRITE) && !isCurrentlyWriting)
-
-
-        if (loaded && couldUseCache) {
-            return this._getFromCache<K>(keys);
-        }
-
-        if (cacheMode === CacheMethod.USE_WRITE && isCurrentlyWriting) {
-            if (keys.length > 1) {
-                throw Error("Getting multiple vars with Cache-Method USE_WRITE is currently not supported.");
-            }
-
-            const fittingWriteTransaction = this.writeTransactionHandler.getTransactionFromKey(keys[0]);
-            const value = fittingWriteTransaction?.value;
-            if (value == undefined) {
-                throw new Error(`Error while trying to get value with key: ${key} and using the USE_WRITE cache method. The write-transaction is currently running but the value is undefined`);
-            }
-            return new Observable<K>(sub => {
-                sub.next(value as K);
-                sub.complete();
-            })
-
-        }
-
-        if (cacheMode === CacheMethod.WAIT_FOR_WRITE && isCurrentlyWriting) {
-            if (keys.length > 1) {
-                throw Error("Getting multiple vars with Cache-Method WAIT_FOR_WRITE is currently not supported due to unwanted behaviour, please use another Cache-Method")
-            }
-            return new Observable(sub => {
-                const writeTransaction = this.writeTransactionHandler.getTransactionFromKey(keys[0]);
-                if (writeTransaction) {
-                    writeTransaction.subject.subscribe((status: boolean) => {
-                        sub.next(this.cache.getCopy(keys[0]));
-                        sub.complete();
-                    })
-                } else {
-                    sub.error('Unexpected Error while trying to wait for write. Reported from WriteTransactionHandler, that the key is currently writing, but no transaction was found...');
-                }
-            })
-        }
-
-        // Else
-        this.readStack.push(...keys);
-        this.toggleBackSlowMode();
-        return new Observable<K>(sub => {
-            const x = this.getRequestLoadedSubject.subscribe(() => {
-
-                let allKeysDeletedFromStack = true;
-                for (const key of keys) {
-                    allKeysDeletedFromStack = allKeysDeletedFromStack && !this.readStack.includes(key);
-                }
-
-                if (!allKeysDeletedFromStack || !this.hmiKeysLoaded(keys)) return;
-
-                sub.next(this.concatenateCacheFromKeys(keys) as K)
-                sub.complete();
-                x.unsubscribe();
-            });
-        })
     }
 
-    private _getFromCache<K>(keys: FlattenKeys<T>[]) {
-        return new Observable<K>(subscriber => {
-            subscriber.next(this.concatenateCacheFromKeys(keys) as K);
-            subscriber.complete();
-        })
-    }
+    // private _getFromCache<K>(keys: FlattenKeys<T>[]) {
+    //     return new Observable<K>(subscriber => {
+    //         subscriber.next(this.concatenateCacheFromKeys(keys) as K);
+    //         subscriber.complete();
+    //     })
+    // }
 
     private concatenateCacheFromKeys(keys: FlattenKeys<T>[]) {
         if (keys.length === 1) {
@@ -701,7 +670,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
     public write<K = S7DataTypes>(key: FlattenKeys<T>, value: K): Observable<S7DataTypes> {
         this.toggleBackSlowMode();
 
-        return this.writeTransactionHandler.createTransaction(key, value as S7DataTypes);
+        return this.writeTransactionHandler.createTransaction([key], value as S7DataTypes);
     }
 
     private initDefaultErrorHandler() {

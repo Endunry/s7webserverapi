@@ -254,4 +254,16 @@ export class CacheStructure<T> {
         return typeof nextKey === 'number' ? [] : {};
     }
 
+    public hmiKeyLoaded(key: FlattenKeys<T> | FlattenKeys<T>[]): boolean {
+        if (Array.isArray(key)) {
+            for (const singleKey of key) {
+                if (!this.entryExists(singleKey)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return this.entryExists(key);
+    }
+
 }
