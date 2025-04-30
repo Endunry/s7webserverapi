@@ -109,7 +109,11 @@ export enum RPCMethods {
     Read = "PlcProgram.Read",
     Write = "PlcProgram.Write",
     GetCertificateUrl = "Api.GetCertificateUrl",
-    GetPermissions = "Api.GetPermissions"
+    GetPermissions = "Api.GetPermissions",
+    BrowseFiles = "Files.Browse",
+    DownloadFile = "Files.Download",
+    BrowseTickets = "Api.BrowseTickets",
+    CloseTicket = "Api.CloseTicket"
 }
 
 export type RPCResults = LoginResult | WriteResult | GetCertificateUrlResult | ReadResult | GetPermissionsResult | PingResult | BrowseFilesResult | DownloadFileResult | BrowseTicketsResult | CloseTicketResult;

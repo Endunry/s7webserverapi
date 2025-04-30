@@ -1,5 +1,5 @@
 import { forkJoin, map, mergeMap, Observable, ObservableInput, ReplaySubject, Subject, Subscription, switchMap, take, throwError } from "rxjs";
-import { BrowseTicketsResult, CacheMethod, CloseTicketResult, FileBrowseResult, FlattenKeys, GetCertificateUrlParams, GetPermissionsParams, GetPermissionsResult, LoginParams, LoginResult, Params, PingParams, PlcPermissions, ReadParams, ReadResult, RPCErrorCode, RPCLoginError, RPCMethodObject, RPCMethods, RPCResponse, RPCResults, S7DataTypes, S7JsonClient, S7WebserverClientConfig, WriteParams, WriteResult } from "../util/types";
+import { BrowseFilesParams, BrowseFilesResult, BrowseTicketsParams, BrowseTicketsResult, CacheMethod, CloseTicketParams, CloseTicketResult, DownloadFileParams, DownloadFileResult, FileBrowseResult, FlattenKeys, GetCertificateUrlParams, GetPermissionsParams, GetPermissionsResult, LoginParams, LoginResult, Params, PingParams, PlcPermissions, ReadParams, ReadResult, RPCErrorCode, RPCLoginError, RPCMethodObject, RPCMethods, RPCResponse, RPCResults, S7DataTypes, S7JsonClient, S7WebserverClientConfig, WriteParams, WriteResult } from "../util/types";
 import { RxJSHttpClient } from "rxjs-http-client";
 import { GetTransaction, GetTransactionHandler, WriteTransaction, WriteTransactionHandler } from "./WriteTransaction";
 import { CacheStructure } from "./CacheStructure";
@@ -322,13 +322,17 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         this.permissionsSubject.next(perms);
     }
 
-    protected getRPCMethodObject(method: RPCMethods.Ping, params: PingParams, id?: string): RPCMethodObject;
-    protected getRPCMethodObject(method: RPCMethods.Read, params: ReadParams, id?: string): RPCMethodObject;
-    protected getRPCMethodObject(method: RPCMethods.Login, params: LoginParams, id?: string): RPCMethodObject;
-    protected getRPCMethodObject(method: RPCMethods.GetCertificateUrl, params: GetCertificateUrlParams, id?: string): RPCMethodObject;
-    protected getRPCMethodObject(method: RPCMethods.Write, params: WriteParams, id?: string): RPCMethodObject;
-    protected getRPCMethodObject(method: RPCMethods.GetPermissions, params: GetPermissionsParams, id?: string): RPCMethodObject;
-    protected getRPCMethodObject(method: RPCMethods, params: Params, id: string = '0'): RPCMethodObject {
+    getRPCMethodObject(method: RPCMethods.BrowseTickets, params: BrowseTicketsParams, id?: string): RPCMethodObject;
+    getRPCMethodObject(method: RPCMethods.CloseTicket, params: CloseTicketParams, id?: string): RPCMethodObject;
+    getRPCMethodObject(method: RPCMethods.Ping, params: PingParams, id?: string): RPCMethodObject;
+    getRPCMethodObject(method: RPCMethods.BrowseFiles, params: BrowseFilesParams, id?: string): RPCMethodObject;
+    getRPCMethodObject(method: RPCMethods.DownloadFile, params: DownloadFileParams, id?: string): RPCMethodObject;
+    getRPCMethodObject(method: RPCMethods.Read, params: ReadParams, id?: string): RPCMethodObject;
+    getRPCMethodObject(method: RPCMethods.Login, params: LoginParams, id?: string): RPCMethodObject;
+    getRPCMethodObject(method: RPCMethods.GetCertificateUrl, params: GetCertificateUrlParams, id?: string): RPCMethodObject;
+    getRPCMethodObject(method: RPCMethods.Write, params: WriteParams, id?: string): RPCMethodObject;
+    getRPCMethodObject(method: RPCMethods.GetPermissions, params: GetPermissionsParams, id?: string): RPCMethodObject;
+    getRPCMethodObject(method: RPCMethods, params: Params, id: string = '0'): RPCMethodObject {
         return {
             jsonrpc: "2.0",
             method: method,
@@ -404,6 +408,18 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
                 this.handleRPCResponseError(unhashedId, response.error);
                 if (command === "WRITE") {
                     this.writeTransactionHandler.resolveDependentKey(Number(additional), key, false);
+                } else if (command === "BROWSEFILES") {
+                    this.browseFilesMap.get(key as string)?.complete();
+                    this.browseFilesMap.delete(key as string);
+                } else if (command === "DOWNLOADFILE") {
+                    this.downloadFileMap.get(key as string)?.complete();
+                    this.downloadFileMap.delete(key as string);
+                } else if (command === "BROWSETICKETS") {
+                    this.browseTicketsMap.get(key as string)?.complete();
+                    this.browseTicketsMap.delete(key as string);
+                } else if (command === "CLOSETICKET") {
+                    this.closeTicketMap.get(key as string)?.complete();
+                    this.closeTicketMap.delete(key as string);
                 }
                 continue;
             }
@@ -415,6 +431,46 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
                 case "WRITE":
                     this.handleRPCResponseWrite(key, response as RPCResponse<WriteResult>, Number(additional));
                     break;
+                case "BROWSEFILES": {
+                    if (this.browseFilesMap.has(key as string)) {
+                        this.browseFilesMap.get(key as string)!.next((response.result as BrowseFilesResult).resources)
+                        this.browseFilesMap.get(key as string)!.complete();
+                        this.browseFilesMap.delete(key as string);
+                    } else {
+                        throw new Error("Getting a BrowseFiles-Response without an active BrowseFiles-Request")
+                    }
+                    break;
+                }
+                case "DOWNLOADFILE": {
+                    if (this.downloadFileMap.has(key as string)) {
+                        this.downloadFileMap.get(key as string)!.next((response.result as DownloadFileResult))
+                        this.downloadFileMap.get(key as string)!.complete();
+                        this.downloadFileMap.delete(key as string);
+                    } else {
+                        throw new Error("Getting a DownloadFile-Response without an active DownloadFile-Request")
+                    }
+                    break;
+                }
+                case "BROWSETICKETS": {
+                    if (this.browseTicketsMap.has(key as string)) {
+                        this.browseTicketsMap.get(key as string)!.next((response.result as BrowseTicketsResult));
+                        this.browseTicketsMap.get(key as string)!.complete();
+                        this.browseTicketsMap.delete(key as string);
+                    } else {
+                        throw new Error("Getting a BrowseTickets-Response without an active BrowseTickets-Request");
+                    }
+                    break;
+                }
+                case "CLOSETICKET": {
+                    if (this.closeTicketMap.has(key as string)) {
+                        this.closeTicketMap.get(key as string)!.next((response.result as CloseTicketResult));
+                        this.closeTicketMap.get(key as string)!.complete();
+                        this.closeTicketMap.delete(key as string);
+                    } else {
+                        throw new Error("Getting a CloseTicket-Response without an active CloseTicket-Request");
+                    }
+                    break;
+                }
             }
 
 
@@ -540,6 +596,25 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         }
     }
 
+    collectFileRPCMethodObject(objectSet: Set<RPCMethodObject>): void {
+        for (const key of this.downloadFileMap.keys()) {
+            objectSet.add(this.getRPCMethodObject(RPCMethods.DownloadFile, { resource: key }, `DOWNLOADFILE:${key}`))
+        }
+
+        for (const key of this.browseFilesMap.keys()) {
+            objectSet.add(this.getRPCMethodObject(RPCMethods.BrowseFiles, { resource: key }, `BROWSEFILES:${key}`))
+        }
+    }
+
+    collectTicketRPCMethodObjects(objectSet: Set<RPCMethodObject>): void {
+        for (const key of this.closeTicketMap.keys()) {
+            objectSet.add(this.getRPCMethodObject(RPCMethods.CloseTicket, { id: key }, `CLOSETICKET:${key}`));
+        }
+
+        for (const key of this.browseTicketsMap.keys()) {
+            objectSet.add(this.getRPCMethodObject(RPCMethods.BrowseTickets, null, `BROWSETICKETS:${key}`));
+        }
+    }
     /**
    * Collects all the different RPC-Methods that should be called on a polling-cycle.
    *
@@ -549,6 +624,8 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         this.collectGetRPCMethodObjects(set);
         this.collectWriteRPCMethodObjects(set);
         this.collectSubscribeRPCMethodObjects(set);
+        this.collectFileRPCMethodObject(set);
+        this.collectTicketRPCMethodObjects(set);
         // IMPORTANT: This function should be the last function that is called in the collection of RPC Methods.
         this.collectStaticRPCMethodObjects(set);
         return set;
