@@ -7,7 +7,6 @@ import { CacheStructure } from "./CacheStructure";
  *
  * This class handles this. When writing, we create a new transaction. This is especially a shared Observable that we send back to the writing-caller and the polling-loop will collect the write-transaction here and when the transaction is done it will send a value to the Observable.
 */
-
 export class WriteTransactionHandler<KeyObject> {
 
     transactions: (WriteTransaction<KeyObject> | null)[] = [];
