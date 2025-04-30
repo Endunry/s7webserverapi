@@ -1,5 +1,5 @@
-import { map, mergeMap, Observable, ObservableInput, ReplaySubject, Subject, Subscription, switchMap, take } from "rxjs";
-import { CacheMethod, FlattenKeys, GetCertificateUrlParams, GetPermissionsParams, GetPermissionsResult, LoginParams, LoginResult, Params, PingParams, PlcPermissions, ReadParams, ReadResult, RPCErrorCode, RPCLoginError, RPCMethodObject, RPCMethods, RPCResponse, RPCResults, S7DataTypes, S7JsonClient, S7WebserverClientConfig, WriteParams, WriteResult } from "../util/types";
+import { forkJoin, map, mergeMap, Observable, ObservableInput, ReplaySubject, Subject, Subscription, switchMap, take, throwError } from "rxjs";
+import { BrowseTicketsResult, CacheMethod, CloseTicketResult, FileBrowseResult, FlattenKeys, GetCertificateUrlParams, GetPermissionsParams, GetPermissionsResult, LoginParams, LoginResult, Params, PingParams, PlcPermissions, ReadParams, ReadResult, RPCErrorCode, RPCLoginError, RPCMethodObject, RPCMethods, RPCResponse, RPCResults, S7DataTypes, S7JsonClient, S7WebserverClientConfig, WriteParams, WriteResult } from "../util/types";
 import { RxJSHttpClient } from "rxjs-http-client";
 import { GetTransaction, GetTransactionHandler, WriteTransaction, WriteTransactionHandler } from "./WriteTransaction";
 import { CacheStructure } from "./CacheStructure";
@@ -55,14 +55,27 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
      */
     private ignoreCacheSubscriberTrie: SubscriberTrie<T> = new SubscriberTrie();
 
+    private browseFilesMap: Map<string, Subject<FileBrowseResult[]>> = new Map<string, Subject<FileBrowseResult[]>>();
+    private downloadFileMap: Map<string, Subject<string>> = new Map();
+
+    private browseTicketsCounter = 0;
+    private browseTicketsMap: Map<string, Subject<BrowseTicketsResult>> = new Map();
+    private closeTicketMap: Map<string, Subject<CloseTicketResult>> = new Map();
+
 
     private localStorage?: Storage;
 
     private pollTimeout: NodeJS.Timeout | undefined;
-
-    constructor(private baseUrl: string, private config: S7WebserverClientConfig<T>) {
+    private ticketApiUrl: string;
+    constructor(private baseUrl: string, private config: S7WebserverClientConfig<T>, ticketApiUrl?: string) {
         this.config.localStoragePrefix = config.localStoragePrefix ?? 's7_'
         this.config.defaultUser = config.defaultUser ?? { user: 'Anonymous', password: '' };
+
+        this.ticketApiUrl = this.baseUrl.replace('jsonrpc', 'ticket');
+
+        if (ticketApiUrl != undefined) {
+            this.ticketApiUrl = ticketApiUrl;
+        }
 
         this.config.polling = config.polling ?? {
             slowMinDelay: 1000 * 60, // Every minute
@@ -81,6 +94,161 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
         }
         this.initDefaultErrorHandler();
 
+    }
+
+    private getFileDownloadTicket(path: string): Observable<string> {
+        return new Observable(subscriber => {
+            if (this.downloadFileMap.has(path)) {
+                subscriber.error(`${path} already has an active download-request`);
+                subscriber.complete();
+                return;
+            }
+            this.downloadFileMap.set(path, new Subject<string>());
+            const x = this.downloadFileMap.get(path)!.subscribe(subscriber);
+            return () => {
+                x.unsubscribe();
+            }
+        })
+    }
+
+    private downloadTicket(ticketId: string, type: 'text' | 'arrayBuffer' | 'json' = 'text'): Observable<string> {
+        return new Observable(subscriber => {
+            this.checkStoredToken().pipe(take(1)).subscribe(() => {
+                const x = this.http.post(this.ticketApiUrl + `?id=${ticketId}`, {
+                    headers: {
+                        // "X-Auth-Token": this.token,
+                        "Content-Type": "application/octet-stream"
+                    },
+                    // params: {
+                    //   id: ticketId
+                    // }
+                })
+                    .pipe(
+                        mergeMap(response => {
+                            if (type == 'text') {
+                                return response.text()
+                            } else if (type == 'json') {
+                                return response.json();
+                            } else {
+                                return response.arrayBuffer();
+                            }
+                        })
+                    )
+                    .subscribe({
+                        next: sub => subscriber.next(sub),
+                        complete: () => {
+                            this.closeTicket(ticketId).subscribe();
+                            subscriber.complete();
+                        },
+                        error: err => subscriber.error(err)
+                    });
+                return () => {
+                    x.unsubscribe();
+                }
+            })
+        })
+    }
+
+    downloadFile(path: string, binary?: boolean): Observable<string> {
+        if (!this.can('read_file')) {
+            return throwError(() => new Error(`The current user ${this.user} can't read files`));
+        }
+        return new Observable(subscriber => {
+            const x = this.getFileDownloadTicket(path).subscribe(ticket => {
+                const y = this.downloadTicket(ticket, binary ? 'arrayBuffer' : 'text').subscribe(subscriber);
+                return () => {
+                    y.unsubscribe();
+                }
+            });
+            return () => {
+                x.unsubscribe();
+            }
+        })
+    }
+
+    downloadFolder(folderPath: string): Observable<(FileBrowseResult & { data: string; })[]> {
+        if (!this.can('read_file')) {
+            return throwError(() => new Error(`The current user ${this.user} can't read files`));
+        }
+        return new Observable(subscriber => {
+            const x = this.browsePath(folderPath).subscribe(result => {
+
+                const observableArray: Observable<string>[] = [];
+                const returnObject: (FileBrowseResult & { data: string })[] = [];
+                for (const entry of result) {
+                    if (entry.type == 'dir' || entry.state == 'active') {
+                        continue;
+                    }
+                    returnObject.push({ ...entry, data: "" });
+                    observableArray.push(this.downloadFile(folderPath + '/' + entry.name));
+                }
+                const x = forkJoin(observableArray).subscribe(files => {
+                    for (let i = 0; i < files.length; i++) {
+                        returnObject[i].data = files[i];
+                    }
+                    subscriber.next(returnObject);
+                    subscriber.complete();
+                });
+                return () => {
+                    x.unsubscribe();
+                }
+            });
+
+            return () => {
+                x.unsubscribe();
+            }
+        })
+    }
+    browsePath(path: string): Observable<FileBrowseResult[]> {
+        return new Observable(subscriber => {
+            if (this.browseFilesMap.has(path)) {
+                subscriber.error(`${path} already has an active FileBrowseRequest`);
+                subscriber.complete();
+                return;
+            }
+            this.browseFilesMap.set(path, new Subject<FileBrowseResult[]>());
+            const x = this.browseFilesMap.get(path)!.subscribe(subscriber);
+            return () => {
+                x.unsubscribe();
+            }
+        })
+    }
+    closeAllTickets(): Observable<boolean> {
+        return new Observable(sub => this.browseTickets().subscribe(ticketResult => {
+
+            const obs = ticketResult.tickets.map(ticket => {
+                return this.closeTicket(ticket.id);
+            })
+
+            const x = forkJoin(obs).subscribe(allClosedTickets => {
+                sub.next(allClosedTickets.every(x => x));
+                sub.complete();
+            });
+            () => {
+                x.unsubscribe();
+            }
+        }));
+    }
+
+    browseTickets(): Observable<BrowseTicketsResult> {
+        if (this.browseTicketsCounter >= 10) {
+            this.browseTicketsCounter = 0;
+        }
+        const id = `${this.browseTicketsCounter++}`;
+        if (this.browseTicketsMap.has(id)) {
+            return new Observable(s => s.error(`Somehow there already is an browseTicket with id ${id} running`));
+        }
+        this.browseTicketsMap.set(id, new Subject());
+        return this.browseTicketsMap.get(id)!.asObservable();
+    }
+
+    public closeTicket(ticketId: string): Observable<CloseTicketResult> {
+        const id = `${ticketId}`;
+        if (this.closeTicketMap.has(id)) {
+            return new Observable(s => s.error(`Already trying to close the ticket with the id ${id}`));
+        }
+        this.closeTicketMap.set(id, new Subject());
+        return this.closeTicketMap.get(id)!.asObservable();
     }
 
     public get onPollError() {

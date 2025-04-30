@@ -33,6 +33,12 @@ export interface S7JsonClient<T> {
     can(permission: PlcPermissions): boolean;
     getPermissionsUpdates(): Observable<PlcPermissions[]>;
     login(user: string, password: string): Observable<true | number>;
+    downloadFile(path: string, binary?: boolean): Observable<string>;
+    downloadFolder(folderPath: string): Observable<(FileBrowseResult & { data: string })[]>;
+    browsePath(path: string): Observable<FileBrowseResult[]>;
+    closeAllTickets(): Observable<boolean>;
+    browseTickets(): Observable<BrowseTicketsResult>;
+    closeTicket(ticketId: string): Observable<CloseTicketResult>;
 }
 
 export enum CacheMethod {
@@ -106,10 +112,51 @@ export enum RPCMethods {
     GetPermissions = "Api.GetPermissions"
 }
 
-export type RPCResults = LoginResult | WriteResult | GetCertificateUrlResult | ReadResult | GetPermissionsResult | PingResult;
+export type RPCResults = LoginResult | WriteResult | GetCertificateUrlResult | ReadResult | GetPermissionsResult | PingResult | BrowseFilesResult | DownloadFileResult | BrowseTicketsResult | CloseTicketResult;
 
-export type Params = LoginParams | ReadParams | WriteParams | GetCertificateUrlParams | GetPermissionsParams | PingParams;
+export type Params = LoginParams | ReadParams | WriteParams | GetCertificateUrlParams | GetPermissionsParams | PingParams | BrowseFilesParams | DownloadFileParams | BrowseTicketsParams | CloseTicketParams;
 
+export type FilesParams = {
+    resource: string
+}
+
+export type BrowseFilesParams = FilesParams;
+export interface FileBrowseResult {
+    name: string,
+    type: string,
+    size?: number,
+    last_modified: string,
+    state?: string //DataLogs active/inactive
+}
+export type BrowseFilesResult = {
+    resources: FileBrowseResult[];
+}
+
+export type CloseTicketParams = {
+    id: string
+};
+export type CloseTicketResult = boolean;
+
+export type BrowseTicketsParams = {
+    id?: string
+} | null
+
+export type BrowseTicket = {
+    id: string;
+    date_created: string;
+    provider: string;
+    state: string,
+    data?: object,
+}
+
+export type BrowseTicketsResult = {
+    max_tickets: number,
+    tickets: BrowseTicket[];
+}
+
+
+export type DownloadFileParams = FilesParams;
+export type DownloadFileResult = string;
 
 
 // Login
