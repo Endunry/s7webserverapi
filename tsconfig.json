@@ -4,7 +4,9 @@
     "target": "es2020",
     "moduleResolution": "node",
     "declaration": true,
-    "outDir": "./dist"
+    "outDir": "./dist",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true
   },
   "include": ["src/**/*"],
   "exclude": ["scripts/**/*"]

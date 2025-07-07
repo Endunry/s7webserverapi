@@ -56,8 +56,9 @@ import {
   WriteTransactionHandler,
 } from "./WriteTransaction";
 import { CacheStructure } from "./CacheStructure";
-import * as murmurhash from "murmurhash";
+
 import { SubscriberTrie } from "./Trie";
+import * as murmurhash from "murmurhash";
 
 export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
   protected http: RxJSHttpClient;
@@ -159,8 +160,8 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
     }
 
     this.localStorage = undefined;
-    if (Object.keys(this).includes("localStorage")) {
-      this.localStorage = this.localStorage;
+    if (Object.keys(window).includes("localStorage")) {
+      this.localStorage = window.localStorage;
     }
     this.initDefaultErrorHandler();
   }
@@ -420,6 +421,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
           const x = this.postRequest(
             this.ticketApiUrl + `?id=${ticketId}`,
             { "Content-Type": "application/octet-stream" },
+            null,
             type === "arrayBuffer"
           ).subscribe({
             next: (sub) => subscriber.next(sub),
@@ -712,7 +714,14 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
     };
   }
 
+  protected debugLog(...arg0: any[]) {
+    if (this.config.debug === true) {
+      console.debug(...arg0);
+    }
+  }
+
   public initPLCPoll() {
+    this.debugLog("Init PLC Poll called");
     this.checkStoredToken()
       .pipe(take(1))
       .subscribe({
@@ -749,14 +758,14 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
   }
 
   protected getHashedId(humanReadableId: string): number {
-    let hashedId = murmurhash(humanReadableId);
+    let hashedId = murmurhash.default(humanReadableId);
     let counter = 0;
     while (
       this.rpcRequestHashedKeyMap.has(hashedId) &&
       this.rpcRequestHashedKeyMap.get(hashedId) !== humanReadableId
     ) {
       counter++;
-      hashedId = murmurhash(humanReadableId + counter.toString());
+      hashedId = murmurhash.default(humanReadableId + counter.toString());
     }
     this.rpcRequestHashedKeyMap.set(hashedId, humanReadableId);
 
@@ -966,7 +975,7 @@ export class S7WebserverClient<T = "Structureless"> implements S7JsonClient<T> {
    */
   pollData(once: boolean = false) {
     this.lastPollingTime = new Date();
-
+    this.debugLog("pollData called");
     const headers = {
       "Content-Type": "application/json",
       "X-Auth-Token": this.token,

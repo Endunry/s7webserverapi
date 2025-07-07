@@ -234,6 +234,7 @@ export interface S7WebserverClientConfig<T> {
   /**
    *
    */
+  debug?: boolean;
   prefixSubstitutionMap?: PrefixSubstitutionMap<T>;
 }
 
